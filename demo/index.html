@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prediction widget demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f4f5f7; margin: 0; padding: 24px; }
+    #pw { max-width: 380px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 20px;
+          box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+    #pw h3 { margin: 0 0 4px; font-size: 18px; }
+    #pw .meta { color: #666; font-size: 13px; margin-bottom: 12px; }
+    #pw .row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
+    #pw input { width: 100%; box-sizing: border-box; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 8px; }
+    #pw .btns { display: flex; gap: 8px; }
+    #pw button { flex: 1; padding: 10px; border: 0; border-radius: 8px; font-size: 15px; cursor: pointer; color: #fff; background: #333; }
+    #pw button.yes { background: #1a9e5c; }
+    #pw button.no  { background: #d6453d; }
+    #pw button:disabled { opacity: .5; cursor: not-allowed; }
+    #msg { margin-top: 12px; font-size: 13px; color: #555; min-height: 18px; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <div id="pw">
+    <button id="connect">Connect wallet</button>
+    <div id="round" hidden>
+      <h3 id="q"></h3>
+      <div class="meta" id="meta"></div>
+      <div class="row"><span>YES pool</span><b id="yesPool"></b></div>
+      <div class="row"><span>NO pool</span><b id="noPool"></b></div>
+      <div class="row"><span>Your stake</span><b id="mine"></b></div>
+      <input id="amount" type="number" step="0.001" min="0" placeholder="Amount in ETH, e.g. 0.01">
+      <div class="btns">
+        <button class="yes" id="betYes">YES</button>
+        <button class="no" id="betNo">NO</button>
+      </div>
+      <button id="claim" style="margin-top:8px" hidden>Claim winnings</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <script type="module">
+    import { PredictionWidget } from "../sdk/prediction-widget.js";
+
+    // ---- CONFIG: fill in after deploying ----
+    const ROUND_ID = 1;
+    const widget = new PredictionWidget({
+      contractAddress: "0xYOUR_CONTRACT_ADDRESS",
+      chainId: 84532, // Base Sepolia
+      chainParams: {
+        chainId: "0x14a34",
+        chainName: "Base Sepolia",
+        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+        rpcUrls: ["https://sepolia.base.org"],
+        blockExplorerUrls: ["https://sepolia.basescan.org"],
+      },
+    });
+    // -----------------------------------------
+
+    const $ = (id) => document.getElementById(id);
+    const say = (t) => ($("msg").textContent = t);
+
+    async function render() {
+      const r = await widget.getRound(ROUND_ID);
+      $("q").textContent = r.question;
+      $("meta").textContent = r.status === "resolved"
+        ? `Resolved: ${r.result}`
+        : `${r.status.toUpperCase()}, closes ${r.closesAt.toLocaleString()}`;
+      $("yesPool").textContent = `${r.yesPool} ETH` + (r.yesMultiplier ? ` (x${r.yesMultiplier.toFixed(2)})` : "");
+      $("noPool").textContent = `${r.noPool} ETH` + (r.noMultiplier ? ` (x${r.noMultiplier.toFixed(2)})` : "");
+      $("mine").textContent = `YES ${r.myYesStake} / NO ${r.myNoStake}`;
+      const canBet = r.status === "open";
+      $("betYes").disabled = $("betNo").disabled = !canBet;
+      $("claim").hidden = r.status !== "resolved";
+    }
+
+    async function run(label, fn) {
+      try {
+        say(label + "...");
+        await fn();
+        say("Done.");
+        await render();
+      } catch (e) {
+        say(e.shortMessage || e.reason || e.message);
+      }
+    }
+
+    $("connect").onclick = () => run("Connecting", async () => {
+      const acc = await widget.connect();
+      $("connect").textContent = acc.slice(0, 6) + "..." + acc.slice(-4);
+      $("connect").disabled = true;
+      $("round").hidden = false;
+      widget.onUpdate(ROUND_ID, render); // live refresh when anyone bets or the round resolves
+    });
+    $("betYes").onclick = () => run("Confirm in wallet", () => widget.predict(ROUND_ID, "YES", $("amount").value));
+    $("betNo").onclick  = () => run("Confirm in wallet", () => widget.predict(ROUND_ID, "NO",  $("amount").value));
+    $("claim").onclick  = () => run("Claiming", () => widget.claim(ROUND_ID));
+  </script>
+</body>
+</html>
